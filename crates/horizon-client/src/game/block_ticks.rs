@@ -314,8 +314,10 @@ impl Game<'_> {
         self.tick_chunks.recycle_added(added);
     }
 
-    /// `ServerLevel.tick`: moving block entities push after entity travel.
+    /// `ServerLevel.tick`: moving block entities push after entity travel,
+    /// and after the geysers' pushes, whose tickers joined the list first.
     pub(super) fn tick_moving_pistons(&mut self) -> Result<()> {
+        self.tick_geyser_launches();
         self.with_level(|b, level, ticks| b.tick_block_entities(level, ticks));
         let pushes = std::mem::take(&mut self.block_ticks.piston_pushes);
         self.push_piston_entities(pushes);

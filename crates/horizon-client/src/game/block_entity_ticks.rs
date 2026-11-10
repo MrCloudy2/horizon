@@ -16,6 +16,33 @@ use horizon_core::position::BlockPos;
 use horizon_world::registry::BlockStateId;
 
 impl Game<'_> {
+    /// `PotentSulfurBlockEntity.LAUNCH_ENTITY_TICKER` for every geyser that
+    /// erupts, before the moving pistons tick. `Level.tickBlockEntities` runs
+    /// its tickers in the order they joined the list: a potent sulfur block's
+    /// is there from the load of its chunk (a change of state rebinds it in
+    /// place, `LevelChunk.updateBlockEntityTicker`), a moving piston's joins
+    /// when the move starts. So the geyser's push comes first, and a piston's
+    /// push of the same tick is what the entity keeps (it stops one a cobweb
+    /// holds, or one it presses against a ceiling).
+    pub(super) fn tick_geyser_launches(&mut self) {
+        if !self.world.block_entities.has_states() {
+            return;
+        }
+        let ticking = self.block_ticking_area();
+        for slot in self.world.block_entity_tickers().iter().copied() {
+            let pos = slot.0;
+            if self.world.block_entities.is_asleep(&pos)
+                || !self.world.block_entities.is_live(slot)
+                || !ticking(pos.0, pos.2)
+                || !self.border.contains(f64::from(pos.0), f64::from(pos.2))
+            {
+                continue;
+            }
+            if let Some(BlockEntity::PotentSulfur(_)) = self.world.block_entities.get(&pos) {
+                self.launch_potent_sulfur(pos);
+            }
+        }
+    }
     pub(super) fn tick_block_entities(&mut self) -> Result<()> {
         self.tick_mount_menu();
         self.tick_craft_table();
