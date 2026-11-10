@@ -51,6 +51,11 @@ struct PistonIndex {
     drawn: horizon_client::fast_hash::FxHashMap<[i32; 3], usize>,
 }
 
+/// How far this tick's pistons have moved each entity on each axis
+/// (`Entity.pistonDeltas`), kept for the whole tick.
+#[derive(Default)]
+pub(super) struct PistonDeltas(std::collections::HashMap<Target, PistonMovement>);
+
 /// `Entity.getStepHeight` of each body, read before the push.
 struct StepHeights {
     player: f32,
@@ -78,7 +83,15 @@ impl Game<'_> {
     /// ticks) takes each piston's new progress right after its own push: a
     /// TNT duper's TNT stops at the block that has not moved yet (#11399).
     pub(super) fn push_piston_entities(&mut self, pushes: Vec<Push>) {
-        let mut accumulators = std::collections::HashMap::new();
+        self.push_piston_entities_in(pushes, &mut PistonDeltas::default());
+    }
+
+    /// [`Self::push_piston_entities`] for a part of the tick's pistons: the
+    /// limit on how far one tick's pistons move an entity
+    /// (`Entity.limitPistonMovement`) carries over in `deltas` between the
+    /// parts.
+    pub(super) fn push_piston_entities_in(&mut self, pushes: Vec<Push>, deltas: &mut PistonDeltas) {
+        let accumulators = &mut deltas.0;
         // Where each moving piston first sits in both lists, so a clock of a
         // thousand pistons doesn't scan them a thousand times a tick.
         let mut index = PistonIndex::default();
@@ -92,7 +105,7 @@ impl Game<'_> {
         let targets = self.piston_push_targets(&pushes, &steps);
         for push in pushes {
             let pos = push.0;
-            self.push_for_piston(push, &targets, &steps, &mut accumulators);
+            self.push_for_piston(push, &targets, &steps, accumulators);
             self.advance_piston_collision(pos, &index);
         }
     }

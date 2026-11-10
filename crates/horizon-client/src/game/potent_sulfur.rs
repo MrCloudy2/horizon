@@ -152,7 +152,7 @@ impl Game<'_> {
     /// `pos`: a wet block gives nausea; a dormant one counts down, then gives
     /// nausea; an erupting one pushes entities, then counts down; a continuous
     /// one pushes entities. A dry block has no ticker. The push itself runs
-    /// earlier in the tick, before the moving pistons (`launch_potent_sulfur`).
+    /// earlier in the tick, among the moving pistons (`launch_potent_sulfur`).
     pub(super) fn tick_potent_sulfur(&mut self, pos: Pos) -> Result<()> {
         let Some((state, geyser)) = self.potent_sulfur_state(pos) else {
             return Ok(());
@@ -169,11 +169,20 @@ impl Game<'_> {
         Ok(())
     }
 
+    /// Whether the geyser at `pos` has the push in its ticker
+    /// (`LAUNCH_ENTITY_TICKER`): erupting or continuous.
+    pub(super) fn launches(&self, pos: Pos) -> bool {
+        matches!(
+            self.potent_sulfur_state(pos),
+            Some((_, Geyser::Erupting | Geyser::Continuous))
+        )
+    }
+
     /// The push of an erupting or continuous geyser at `pos`
-    /// (`LAUNCH_ENTITY_TICKER`), which `tick_geyser_launches` runs before the
-    /// tick's moving pistons.
+    /// (`LAUNCH_ENTITY_TICKER`), which `tick_moving_pistons` runs among the
+    /// tick's moving pistons, in join order.
     pub(super) fn launch_potent_sulfur(&mut self, pos: Pos) {
-        if let Some((_, Geyser::Erupting | Geyser::Continuous)) = self.potent_sulfur_state(pos) {
+        if self.launches(pos) {
             self.launch_entity_ticker(pos);
         }
     }

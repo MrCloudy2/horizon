@@ -30,7 +30,9 @@ pub struct MovingPiston {
     /// `PistonMovingBlockEntity.deathTicks`: on a client the entity waits
     /// five ticks past progress 1.0 before placing the block itself.
     pub death_ticks: i32,
-    /// Identity of this block entity (a replaced entity is a new ticker).
+    /// Identity of this block entity (a replaced entity is a new ticker),
+    /// from [`horizon_core::ticker_seq`]: it also says when its ticker joined
+    /// the list, against the other block entities' tickers.
     pub id: u64,
 }
 impl MovingPiston {
@@ -170,8 +172,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
     }
     fn set_moving_piston(&mut self, pos: BlockPos, mut piston: MovingPiston) {
         self.ticks.moving_pistons.retain(|(p, _)| *p != pos);
-        self.ticks.next_block_entity_id += 1;
-        piston.id = self.ticks.next_block_entity_id;
+        piston.id = horizon_core::ticker_seq::next();
         self.ticks.moving_pistons.push((pos, piston));
     }
     pub(crate) fn remove_moving_piston(&mut self, pos: BlockPos) -> Option<MovingPiston> {
@@ -859,16 +860,28 @@ impl Behaviours {
             .map(|(p, m)| (*p, m.id))
             .collect();
         for (pos, id) in tickers {
-            if !level.is_ticking_chunk(pos.chunk())
-                || !ticks
-                    .moving_pistons
-                    .iter()
-                    .any(|(p, m)| *p == pos && m.id == id)
-            {
-                continue;
-            }
-            self.sim(level, ticks).moving_piston_tick(pos);
+            self.tick_moving_piston(level, ticks, pos, id);
         }
+    }
+    /// One ticker of [`Self::tick_block_entities`]: the moving piston at `pos`
+    /// whose block entity is `id`, unless an earlier ticker replaced or
+    /// removed it, or its chunk does not tick.
+    pub fn tick_moving_piston<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+        id: u64,
+    ) {
+        if !level.is_ticking_chunk(pos.chunk())
+            || !ticks
+                .moving_pistons
+                .iter()
+                .any(|(p, m)| *p == pos && m.id == id)
+        {
+            return;
+        }
+        self.sim(level, ticks).moving_piston_tick(pos);
     }
     /// `ClientLevel.blockEvent`: the client re-runs the block's
     /// `triggerEvent` on its own level (a piston's `moveBlocks` builds the
