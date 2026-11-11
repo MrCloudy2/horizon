@@ -354,6 +354,7 @@ impl Game<'_> {
             self.launch_geyser(slot);
         }
         self.tick_piston_run(&pistons[next..], &mut deltas);
+        self.end_piston_pushes(deltas);
     }
 
     /// The moving pistons in `run`, in order, then the pushes they asked for.
