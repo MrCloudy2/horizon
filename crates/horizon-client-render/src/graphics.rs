@@ -591,6 +591,45 @@ pub fn translucent_batching_offered() -> bool {
     TRANSLUCENT_BATCHING_OFFERED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Parallel Tick's setting, for the worlds this game runs itself (single player, open to LAN):
+/// whether the server tick's phases that give the same result in any order share their work
+/// among helper threads (`parallel`). Auto shares it only while the tick is heavy and sharing
+/// makes it faster; a quiet world stays on one thread and starts no helper.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ParallelTickMode {
+    #[default]
+    Off = 0,
+    Auto = 1,
+    On = 2,
+}
+impl ParallelTickMode {
+    pub const ALL: [ParallelTickMode; 3] = [
+        ParallelTickMode::Off,
+        ParallelTickMode::Auto,
+        ParallelTickMode::On,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Auto => "auto",
+            Self::On => "on",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::Auto => "Auto",
+            Self::On => "On",
+        }
+    }
+    fn parse(s: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|m| m.name() == s)
+            .unwrap_or_default()
+    }
+}
+
 /// GPU Culling's setting: off, on where it is offered, or Auto, which has it on only where the
 /// CPU limits the frame and it makes the frame faster (`autotune::GpuCullingAuto`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -826,6 +865,9 @@ pub struct Graphics {
     pub pacing: Pacing,
     /// Chunk worker threads; 0 uses every core but one. Applies at the next start.
     pub workers: u32,
+    /// Parallel Tick (Performance graphics, beside Worker Threads): applies from the next tick,
+    /// and no preset sets it.
+    pub parallel_tick: ParallelTickMode,
     pub overlay: Overlay,
     /// World resolution as a percentage of the window's (50..=200).
     pub resolution_scale: u32,
@@ -860,8 +902,9 @@ pub struct Graphics {
     /// HDR brightness of the HUD and menus, in nits; 0 is Auto: at paper white
     /// ([`Graphics::ui_nits`]). The first-person hand stays at the world's.
     pub hdr_ui_nits: u32,
-    /// HDR Lighting: Horizon's own HDR look, light sources, the sun and sunlight above paper
-    /// white. Off, HDR output shows the same picture as SDR, for shader packs or the vanilla look.
+    /// HDR Lighting: Horizon's lift of light sources and the sun above paper white; lit surfaces
+    /// stay at it. Off, HDR output shows the same picture as SDR, for shader packs or the vanilla
+    /// look.
     pub hdr_lighting: bool,
     /// The graphics driver whose last start ended before HDR output showed a frame (the
     /// marker found, [`HDR_MARKER`]): a window on it stays SDR whatever the mode, until the
@@ -885,11 +928,6 @@ pub struct Graphics {
     /// `batchTranslucent`: `translucentBatching`, which every save wrote as false while it was
     /// off by default and had no switch, stays ignored.
     pub translucent_batching: bool,
-    /// Smooth Gradients (HDR page, on by default): with HDR output on, the frame is drawn in
-    /// 16 bits, so dark gradients don't band (`Renderer::frame_format`). Read when a renderer
-    /// is made (start, resource-pack reload), like `translucent_batching`, where the renderer's
-    /// device draws it (`EffectiveOutput::wide_frame_supported`).
-    pub hdr_smooth_gradients: bool,
     /// The native `horizon:<manifest-id>` or classic filename picked in `shaderpacks/`; empty: none. Its key is
     /// not `shaderPack`, which versions before the clean-room rewrite saved and which stays
     /// ignored.
@@ -928,6 +966,7 @@ impl Default for Graphics {
             present_mode: PresentMode::Auto,
             pacing: Pacing::Efficient,
             workers: 0,
+            parallel_tick: ParallelTickMode::Off,
             overlay: Overlay::Off,
             resolution_scale: 100,
             dynamic_resolution: false,
@@ -949,7 +988,6 @@ impl Default for Graphics {
             shadow_cache: false,
             api: GraphicsApi::Auto,
             translucent_batching: true,
-            hdr_smooth_gradients: true,
             shader_pack: String::new(),
         }
     }
@@ -1050,6 +1088,7 @@ impl Graphics {
                 "particleCulling" => g.particle_culling = ParticleCullingMode::parse(value),
                 "leafCulling" => g.leaf_culling = LeafCullingMode::parse(value),
                 "opaqueIce" => g.opaque_ice = flag(g.opaque_ice),
+                "parallelTick" => g.parallel_tick = ParallelTickMode::parse(value),
                 "blockEntityCache" => {
                     let enabled = flag(false);
                     g.cache_shulker_boxes = enabled;
@@ -1123,7 +1162,6 @@ impl Graphics {
                 "batteryMode" => g.battery = flag(g.battery),
                 "shadowCache" => g.shadow_cache = flag(g.shadow_cache),
                 "batchTranslucent" => g.translucent_batching = flag(g.translucent_batching),
-                "hdrSmoothGradients" => g.hdr_smooth_gradients = flag(g.hdr_smooth_gradients),
                 "graphicsApi" => g.api = GraphicsApi::from_name(value).unwrap_or_default(),
                 "pickedShaderPack" => g.shader_pack = value.to_owned(),
                 "overlay" => {
@@ -1149,7 +1187,7 @@ impl Graphics {
     }
     pub fn serialize(&self) -> String {
         let mut text = format!(
-            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nentityCullingPrecheck:{}\nparticleCulling:{}\nleafCulling:{}\nopaqueIce:{}\nblockEntityCacheShulkerBoxes:{}\nblockEntityCacheSigns:{}\nblockEntityCacheDecoratedPots:{}\nblockEntityCacheBells:{}\nblockEntityCacheChests:{}\nblockEntityCacheBanners:{}\nblockEntityCacheCopperGolemStatues:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\ntextureBudgetMiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\nditherCutoutMips:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\ndynamicResolution:{}\ntargetFps:{}\nfxaa:{}\ntaa:{}\nupscaling:{}\nupscalingSharpness:{}\nscreenshotQuality:{}\nframeGeneration:{}\nhdr:{}\nhdrPaperWhite:{}\nhdrPeak:{}\nhdrBlackLevel:{}\nhdrUiNits:{}\nhdrLighting:{}\nbatteryMode:{}\nshadowCache:{}\ngraphicsApi:{}\npickedShaderPack:{}\nbatchTranslucent:{}\nhdrSmoothGradients:{}\ngpuCulling:{}\n",
+            "preset:{}\nlodDistance:{}\nfarDetail:{}\ncaveCulling:{}\nentityCulling:{}\nentityCullingPrecheck:{}\nparticleCulling:{}\nleafCulling:{}\nopaqueIce:{}\nblockEntityCacheShulkerBoxes:{}\nblockEntityCacheSigns:{}\nblockEntityCacheDecoratedPots:{}\nblockEntityCacheBells:{}\nblockEntityCacheChests:{}\nblockEntityCacheBanners:{}\nblockEntityCacheCopperGolemStatues:{}\nchunkUpdates:{}\nuploadBudgetKiB:{}\ntextureBudgetMiB:{}\nsky:{}\nfog:{}\nweather:{}\nanimatedTextures:{}\nditherCutoutMips:{}\npresentMode:{}\nframePacing:{}\nworkers:{}\noverlay:{}\nresolutionScale:{}\ndynamicResolution:{}\ntargetFps:{}\nfxaa:{}\ntaa:{}\nupscaling:{}\nupscalingSharpness:{}\nscreenshotQuality:{}\nframeGeneration:{}\nhdr:{}\nhdrPaperWhite:{}\nhdrPeak:{}\nhdrBlackLevel:{}\nhdrUiNits:{}\nhdrLighting:{}\nbatteryMode:{}\nshadowCache:{}\ngraphicsApi:{}\npickedShaderPack:{}\nbatchTranslucent:{}\ngpuCulling:{}\nparallelTick:{}\n",
             self.preset.name(),
             self.lod_distance,
             self.far_detail.name(),
@@ -1205,8 +1243,8 @@ impl Graphics {
             self.api.name(),
             self.shader_pack,
             bool_text(self.translucent_batching),
-            bool_text(self.hdr_smooth_gradients),
             self.gpu_culling.key(),
+            self.parallel_tick.name(),
         );
         if let Some(driver) = &self.hdr_failed_start {
             text += &format!("hdrFailedStart:{driver}\n");
@@ -1523,6 +1561,7 @@ mod tests {
             present_mode: PresentMode::Mailbox,
             pacing: Pacing::Precise,
             workers: 6,
+            parallel_tick: ParallelTickMode::Auto,
             overlay: Overlay::Graph,
             resolution_scale: 75,
             dynamic_resolution: false,
@@ -1546,7 +1585,6 @@ mod tests {
             shadow_cache: true,
             api: GraphicsApi::Dx12,
             translucent_batching: false,
-            hdr_smooth_gradients: false,
             shader_pack: "Golden Hour".into(),
         };
         assert_eq!(Graphics::parse(&g.serialize()), g);
@@ -1597,9 +1635,17 @@ mod tests {
         // off by default, not a choice.
         assert!(Graphics::default().translucent_batching);
         assert!(!Graphics::parse("batchTranslucent:false\n").translucent_batching);
-        // Smooth Gradients is on; its 16-bit frame needs HDR on too (`output::resolve_frame`).
-        assert!(Graphics::default().hdr_smooth_gradients);
-        assert!(!Graphics::parse("hdr:true\nhdrSmoothGradients:false\n").hdr_smooth_gradients);
+        // Smooth Gradients went with its 16-bit frame: a file that still has its key reads as
+        // one without it, and no save writes the key.
+        assert_eq!(
+            Graphics::parse("hdrSmoothGradients:false\n"),
+            Graphics::default()
+        );
+        assert!(
+            !Graphics::default()
+                .serialize()
+                .contains("hdrSmoothGradients")
+        );
         assert!(Graphics::parse("translucentBatching:false\n").translucent_batching);
         // GPU Culling is opt-in: only the file or its switch turns it on.
         assert_eq!(Graphics::default().gpu_culling, GpuCullingMode::Off);
