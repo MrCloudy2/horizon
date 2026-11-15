@@ -42,6 +42,9 @@ pub struct CommandError {
     /// The translation key of the exception type, when known (the
     /// exception "type" vanilla code compares against).
     pub key: String,
+    /// Not a CommandSyntaxException: `Commands.performCommand`'s catch reports
+    /// it as `command.failed` and no result callback runs.
+    pub unexpected: bool,
 }
 impl CommandError {
     pub fn new(message: Text) -> Self {
@@ -51,7 +54,15 @@ impl CommandError {
             cursor: 0,
             literal_incorrect: false,
             key: String::new(),
+            unexpected: false,
         }
+    }
+    /// An exception that is not a CommandSyntaxException, as
+    /// `Commands.performCommand` catches it.
+    pub fn unexpected() -> Self {
+        let mut e = Self::tr("command.failed", &[]);
+        e.unexpected = true;
+        e
     }
     pub fn tr(key: &str, args: &[&dyn std::fmt::Display]) -> Self {
         let mut e = Self::new(Text::tr(key, args));
@@ -65,6 +76,7 @@ impl CommandError {
             cursor: reader.cursor,
             literal_incorrect: false,
             key: String::new(),
+            unexpected: false,
         }
     }
     pub fn tr_at(key: &str, args: &[&dyn std::fmt::Display], reader: &Reader) -> Self {
@@ -1241,5 +1253,7 @@ impl Dispatcher {
     }
 }
 
+#[cfg(test)]
+mod particle_option_tests;
 #[cfg(test)]
 mod tests;
