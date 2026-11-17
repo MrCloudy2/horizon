@@ -513,6 +513,20 @@ fn the_entity_fixture_passes() {
     assert_eq!(kinds, [StageKind::Sky, StageKind::Entity]);
 }
 
+/// The fixture of a pack that fogs its stages itself, as vanilla does.
+#[test]
+fn the_own_fog_fixture_passes() {
+    let pack = Pack::read(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/samples/own-fog"
+    )))
+    .unwrap();
+    let report = check(&pack).unwrap();
+    let kinds: Vec<_> = report.stages.iter().map(|s| s.kind).collect();
+    assert_eq!(kinds, [StageKind::Material, StageKind::Entity]);
+    assert!(!report.material_fog);
+}
+
 /// A pack of the entity stage alone.
 fn entity_pack(entity: &str) -> Result<horizon_shader_api::Report, Vec<Problem>> {
     let manifest = "schema = 1\nid = \"p\"\nname = \"P\"\nversion = \"1\"\napi = \"0.2\"\n\
@@ -1168,4 +1182,28 @@ fn a_traced_pack_that_doesn_t_name_ray_entity_composes_as_before() {
             "3d90723593cdcf680d2cc479b8eedaafd394a7acdbfc58a9c4c5c4761692e876",
         ]
     );
+}
+
+/// The entity layer's bindings against the scene, the retained block entities' store the last of
+/// them (`RAY_ENTITY_RETAINED_BINDING`), are the naming pack's alone: another traced pack's scene
+/// has none of them.
+#[test]
+fn the_retained_block_entities_store_is_the_layer_s_last_binding() {
+    use horizon_shader_api::stages::{
+        GROUP, RAY_ENTITY_RETAINED_BINDING, RAY_ENTITY_STORE_BINDING,
+    };
+    let bindings = |post: &str| -> Vec<u32> {
+        let report = traced(post).unwrap();
+        let scene = report.stages[0].scene.clone().unwrap();
+        let mut found: Vec<u32> = (scene.global_variables.iter())
+            .filter_map(|(_, g)| g.binding.as_ref())
+            .filter(|b| b.group == GROUP && b.binding >= RAY_ENTITY_STORE_BINDING)
+            .map(|b| b.binding)
+            .collect();
+        found.sort_unstable();
+        found
+    };
+    assert_eq!(RAY_ENTITY_RETAINED_BINDING, 63);
+    assert_eq!(bindings(ENTITY_SHADOWED), [60, 61, 62, 63]);
+    assert_eq!(bindings(SHADOWED), [0u32; 0]);
 }
